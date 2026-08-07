@@ -978,7 +978,7 @@ function applyDisplayMode(){const mode=db.settings.displayMode||'auto',root=docu
 function setDisplayMode(mode){db.settings.displayMode=['mobile','desktop','auto'].includes(mode)?mode:'auto';localStorage.setItem(STORAGE_KEY,JSON.stringify(db));applyDisplayMode();setTimeout(()=>{fitPaper();fitDynamicPaper();fitAgendaPaper()},80)}
 function initMobileOpenMode(){const q=new URLSearchParams(location.search);if(!db.settings.displayMode)db.settings.displayMode='auto';applyDisplayMode();if(q.get('open')==='mobile'||q.get('mode')==='mobile')setDisplayMode('mobile')}
 function syncMemberReferences(){if(!db||!db.settings)return;syncPaymentRoster(false);renderMemberNames();renderMemberRoleOptions()}
-function persist(){syncMemberReferences();localStorage.setItem(STORAGE_KEY,JSON.stringify(db));renderAll()}
+function persist(){syncMemberReferences();try{localStorage.setItem(STORAGE_KEY,JSON.stringify(db))}catch(e){console.warn('localStorage儲存空間不足，將改用永久儲存',e)}try{if(window.LionsClubPersistence&&typeof window.LionsClubPersistence.save==='function')window.LionsClubPersistence.save()}catch(e){}renderAll()}
 function pad(n){return String(Number(n||0)).padStart(3,'0')}
 function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function money(n){return Number(n||0).toLocaleString('zh-TW')}
@@ -5072,7 +5072,7 @@ document.addEventListener('input',e=>{if(e.target?.matches?.('#paymentList [data
 
 <script src="backup-import-v168.js"></script>
 
-<script src="love-balance-link-v169.JS"></script>
+<script src="love-balance-link-v169.js"></script>
 
 <script src="finance-love-balance-v170.js"></script>
 
@@ -5089,5 +5089,7 @@ document.addEventListener('input',e=>{if(e.target?.matches?.('#paymentList [data
 <script src="v2-core-v200.js"></script>
 
 <script src="persistence-v201.js"></script>
+
+<script src="love-backup-restore-v204.js"></script>
 
 <script src="logout-backup-v202.js"></script>

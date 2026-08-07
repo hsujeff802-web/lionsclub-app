@@ -82,7 +82,7 @@
   window.createTodaySnapshotV168=function(){
     try{
       const pack=makeBackupObject('today-snapshot');
-      localStorage.setItem(SNAPSHOT_KEY,JSON.stringify(pack));
+      try{sessionStorage.setItem(SNAPSHOT_KEY,JSON.stringify(pack));}catch(e){}
       downloadText('龍興獅子會_'+dateStamp()+'_今日備份.json',JSON.stringify(pack,null,2));
       const info=$('v168BackupStatus');
       if(info)info.textContent='已建立今日備份：'+new Date().toLocaleString('zh-TW');
@@ -102,8 +102,10 @@
         const obj=JSON.parse(String(reader.result||''));
         if(!validBackup(obj))throw new Error('備份格式不符');
         const before=makeBackupObject('before-import');
-        localStorage.setItem(SNAPSHOT_KEY,JSON.stringify(before));
-        localStorage.setItem(appStorageKey(),JSON.stringify(obj.data));
+        try{sessionStorage.setItem(SNAPSHOT_KEY,JSON.stringify(before));}catch(e){}
+        try{localStorage.setItem(appStorageKey(),JSON.stringify(obj.data));}catch(e){console.warn('localStorage已滿，匯入後將交由永久儲存保存',e);}
+        window.db=cloneData(obj.data);
+        try{if(window.LionsClubPersistence&&typeof window.LionsClubPersistence.save==='function')window.LionsClubPersistence.save();}catch(e){}
         refreshApp();
         alert('資料匯入完成。系統將重新整理。');
         location.reload();
@@ -119,12 +121,14 @@
 
   window.restoreLastSnapshotV168=function(){
     try{
-      const raw=localStorage.getItem(SNAPSHOT_KEY);
+      const raw=sessionStorage.getItem(SNAPSHOT_KEY);
       if(!raw)return alert('目前沒有可還原的上一份備份。');
       const obj=JSON.parse(raw);
       if(!validBackup(obj))throw new Error('snapshot invalid');
       if(!confirm('確定要還原上一份備份嗎？目前資料會被覆蓋。'))return;
-      localStorage.setItem(appStorageKey(),JSON.stringify(obj.data));
+      try{localStorage.setItem(appStorageKey(),JSON.stringify(obj.data));}catch(e){console.warn(e);}
+      window.db=cloneData(obj.data);
+      try{if(window.LionsClubPersistence&&typeof window.LionsClubPersistence.save==='function')window.LionsClubPersistence.save();}catch(e){}
       refreshApp();
       alert('上一份備份已還原，系統將重新整理。');
       location.reload();

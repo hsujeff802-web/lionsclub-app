@@ -1,5 +1,5 @@
-const CACHE_NAME='lionsclub-dev-v1.1.23';
-const APP_FILES=['./','./index.html','./manifest.json','./report-recalc-data.js','./手機版.html','./電腦版.html'];
-self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(APP_FILES)).then(()=>self.skipWaiting())));
+const CACHE_NAME='lionsclub-v2.0.4-20260807';
+const APP_FILES=['./','./index.html','./manifest.json','./report-recalc-data.js','./backup-import-v168.js','./love-balance-link-v169.js','./finance-love-balance-v170.js','./no-flicker-v171.js','./modify-finance-v172.css','./modify-finance-v172.js','./modify-reports-v173.css','./modify-reports-v173.js','./admin-password-v174.js','./v2-core-v200.js','./persistence-v201.js','./logout-backup-v202.js','./love-backup-restore-v204.js','./OPEN_MOBILE.html','./OPEN_PC.html','./public.html'];
+self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE_NAME).then(cache=>Promise.all(APP_FILES.map(f=>cache.add(f).catch(()=>null)))).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;event.respondWith(caches.match(event.request).then(cached=>cached||fetch(event.request).then(response=>{const copy=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(event.request,copy));return response}).catch(()=>caches.match('./index.html'))))});
+self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;event.respondWith(fetch(event.request).then(response=>{const copy=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(event.request,copy)).catch(()=>{});return response;}).catch(()=>caches.match(event.request).then(cached=>cached||caches.match('./index.html'))));});
