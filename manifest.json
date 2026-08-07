@@ -1,0 +1,10 @@
+{
+  "name": "龍興獅子會智慧管理系統 DEV V1.1.22",
+  "short_name": "龍興獅子會",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#eef2f7",
+  "theme_color": "#102b4e",
+  "lang": "zh-TW",
+  "description": "電腦版使用手機操作模式；公開頁列出會議議程、財務報表明細與愛心基金明細。"
+}
