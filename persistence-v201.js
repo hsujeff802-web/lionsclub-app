@@ -1,11 +1,12 @@
 (function(){
   'use strict';
 
-  const VERSION='V2.0.4 愛心基金永久保存修正版';
+  const VERSION='V2.0.5 F5永久保存修正版';
   const DB_NAME='LionsClubPersistentDB';
   const STORE_NAME='appData';
   const RECORD_KEY='main';
   const TS_KEY='lionsclub_persist_ts_v204';
+  const RELOAD_GUARD='lionsclub_v205_restore_reload';
   const LEGACY_DUP_KEYS=[
     'lionsclub_appstore_shadow_v203','lionsclub_appstore_shadow_ts_v203',
     'lionsclub-db-v26','lionsclub-mobile-db','lionsclub-db','lionsclub-v26-db','lionsclub-v201-backup',
@@ -19,9 +20,18 @@
   }
   function clone(v){try{return JSON.parse(JSON.stringify(v));}catch(e){return {};}}
   function parse(v){try{return v?JSON.parse(v):null;}catch(e){return null;}}
+  function readLocalMain(){
+    try{
+      const data=parse(localStorage.getItem(appKey()));
+      return data&&typeof data==='object'?data:null;
+    }catch(e){return null;}
+  }
   function currentData(){
+    const local=readLocalMain();
+    if(local)return clone(local);
     if(window.db&&typeof window.db==='object')return clone(window.db);
-    try{const raw=localStorage.getItem(appKey());return raw?JSON.parse(raw):{};}catch(e){return {};}
+    if(window.appData&&typeof window.appData==='object')return clone(window.appData);
+    return {};
   }
   function fingerprint(data){try{return JSON.stringify(data);}catch(e){return '';}}
   function hasUsefulData(data){
@@ -52,7 +62,9 @@
       await new Promise(function(resolve,reject){
         const tx=idb.transaction(STORE_NAME,'readwrite');
         tx.objectStore(STORE_NAME).put(envelope,RECORD_KEY);
-        tx.oncomplete=resolve; tx.onerror=function(){reject(tx.error);}; tx.onabort=function(){reject(tx.error);};
+        tx.oncomplete=resolve;
+        tx.onerror=function(){reject(tx.error);};
+        tx.onabort=function(){reject(tx.error);};
       });
       return true;
     }finally{try{idb.close();}catch(e){}}
@@ -75,13 +87,11 @@
     LEGACY_DUP_KEYS.forEach(function(k){try{localStorage.removeItem(k);}catch(e){}});
   }
   function saveLocalMain(data,savedAt){
-    // localStorage 只保留一份主資料，不再建立 5~7 份完整副本。
     try{
       localStorage.setItem(appKey(),JSON.stringify(data));
       localStorage.setItem(TS_KEY,String(savedAt||Date.now()));
       return true;
     }catch(e){
-      // localStorage 滿了也不能讓整個保存流程失敗；IndexedDB 仍會保存。
       if(e&&(/QuotaExceeded/i.test(String(e.name))||/quota/i.test(String(e.message)))){
         console.warn('localStorage 已滿，改由 IndexedDB 永久保存。');
         return false;
@@ -89,15 +99,18 @@
       throw e;
     }
   }
-  function makeEnvelope(reason){
-    return {format:'LionsClubPersistentData',version:VERSION,savedAt:Date.now(),reason:reason||'manual',data:currentData()};
+  function makeEnvelope(reason,dataOverride){
+    return {format:'LionsClubPersistentData',version:VERSION,savedAt:Date.now(),reason:reason||'manual',data:clone(dataOverride||currentData())};
   }
-  async function durableSave(reason){
+  async function durableSave(reason,dataOverride){
     if(saving){scheduleSave(reason,220);return false;}
     saving=true;
     try{
-      const envelope=makeEnvelope(reason);
-      // 先寫 IndexedDB，避免 localStorage 容量問題造成資料遺失。
+      const envelope=makeEnvelope(reason,dataOverride);
+      if(!hasUsefulData(envelope.data)){
+        const old=await loadIdb();
+        if(old&&old.data&&hasUsefulData(old.data))return false;
+      }
       const idbOk=await saveIdb(envelope);
       const localOk=saveLocalMain(envelope.data,envelope.savedAt);
       lastSavedAt=envelope.savedAt;
@@ -115,7 +128,7 @@
 
   function localCandidate(){
     try{
-      const data=parse(localStorage.getItem(appKey()));
+      const data=readLocalMain();
       if(!data||!hasUsefulData(data))return null;
       return {savedAt:Number(localStorage.getItem(TS_KEY)||0),data:data,source:'localStorage'};
     }catch(e){return null;}
@@ -126,19 +139,24 @@
     const candidates=[];
     if(local)candidates.push(local);
     if(idb&&idb.data&&hasUsefulData(idb.data))candidates.push({savedAt:Number(idb.savedAt||0),data:idb.data,source:'IndexedDB'});
-    if(!candidates.length)return false;
+    if(!candidates.length)return {restored:false,reload:false};
 
-    // V2.0.3 依「筆數較多」選資料，會把較新的少筆資料誤蓋掉。
-    // V2.0.4 改成以最近保存時間為優先；沒有時間戳時才退回 localStorage。
     candidates.sort(function(a,b){return Number(b.savedAt||0)-Number(a.savedAt||0);});
     let best=candidates[0];
     if(Number(best.savedAt||0)===0 && local)best=local;
 
+    const localFp=local?fingerprint(local.data):'';
+    const bestFp=fingerprint(best.data);
+    let needsReload=false;
+    if(best.source==='IndexedDB' && bestFp && bestFp!==localFp){
+      saveLocalMain(best.data,Number(best.savedAt||Date.now()));
+      needsReload=true;
+    }
     window.db=clone(best.data);
     lastSavedAt=Number(best.savedAt||Date.now());
-    lastFingerprint=fingerprint(best.data);
-    try{saveLocalMain(best.data,lastSavedAt);}catch(e){}
-    return best.source||true;
+    lastFingerprint=bestFp;
+    if(best.source!=='IndexedDB')try{saveLocalMain(best.data,lastSavedAt);}catch(e){}
+    return {restored:best.source||true,reload:needsReload};
   }
 
   function updateStatus(text){
@@ -155,57 +173,77 @@
   }
   function wrapSave(name){
     const old=window[name];
-    if(typeof old!=='function'||old.__v204Wrapped)return;
+    if(typeof old!=='function'||old.__v205Wrapped)return;
     const wrapped=function(){
       const result=old.apply(this,arguments);
-      scheduleSave(name,120);
-      setTimeout(function(){scheduleSave(name+'-late',150);},500);
+      setTimeout(function(){
+        const fresh=readLocalMain();
+        if(fresh&&hasUsefulData(fresh))durableSave(name+'-postpersist',fresh);
+        else scheduleSave(name,120);
+      },30);
       return result;
     };
-    wrapped.__v204Wrapped=true; window[name]=wrapped;
+    wrapped.__v205Wrapped=true; window[name]=wrapped;
   }
   function installWrappers(){
-    // 只包真正會修改資料的動作；renderFinance/renderLove 不再觸發保存。
     ['persist','saveFinanceGrid','saveLoveGrid','addFinance','addLove',
      'financeLedgerSave','loveGridSave','saveMember','saveMeeting',
      'saveSettings','saveRoles','saveAdminPassword116'].forEach(wrapSave);
   }
   function installActivityGuard(){
-    document.addEventListener('change',function(){scheduleSave('ui-change',420);},true);
+    document.addEventListener('change',function(){scheduleSave('ui-change',520);},true);
     setInterval(function(){
       try{
-        if(!window.db||typeof window.db!=='object')return;
-        const fp=fingerprint(window.db);
-        if(fp&&fp!==lastFingerprint)scheduleSave('db-change-watch',160);
+        const fresh=readLocalMain();
+        if(!fresh)return;
+        const fp=fingerprint(fresh);
+        if(fp&&fp!==lastFingerprint)durableSave('local-main-change',fresh);
       }catch(e){}
     },900);
   }
   function labels(){
     try{document.title='龍興會智慧管理系統 '+VERSION;}catch(e){}
-    try{const small=document.querySelector('.brand small');if(small)small.textContent=VERSION+'｜財務與愛心基金自動永久保存';}catch(e){}
-    try{const badge=document.querySelector('.update-badge');if(badge)badge.textContent='永久保存・V2.0.4';}catch(e){}
+    try{const small=document.querySelector('.brand small');if(small)small.textContent=VERSION+'｜F5 後資料永久保留';}catch(e){}
+    try{const badge=document.querySelector('.update-badge');if(badge)badge.textContent='修正版・V2.0.5';}catch(e){}
   }
   async function boot(){
     labels(); updateStatus('正在檢查已保存資料…');
-    // 先讀舊資料，再移除 V2.0.3 自己建立的重複大檔 key。
-    const restored=await restoreBest();
+    const result=await restoreBest();
     cleanupLegacyDuplicates();
+
+    if(result.reload){
+      try{
+        if(sessionStorage.getItem(RELOAD_GUARD)!=='1'){
+          sessionStorage.setItem(RELOAD_GUARD,'1');
+          updateStatus('已找到較新的永久資料，正在重新載入…');
+          setTimeout(function(){location.reload();},120);
+          return;
+        }
+      }catch(e){}
+    }
+    try{sessionStorage.removeItem(RELOAD_GUARD);}catch(e){}
+
     installWrappers(); installActivityGuard();
     setTimeout(installWrappers,600); setTimeout(installWrappers,1600); setTimeout(installWrappers,3200);
-    if(restored){
+    if(result.restored){
       try{if(typeof renderAll==='function')renderAll();else{if(typeof renderFinance==='function')renderFinance();if(typeof renderLove==='function')renderLove();}}catch(e){}
-      updateStatus('已從 '+restored+' 恢復資料；新增或修改會自動永久保存。');
+      updateStatus('已從 '+result.restored+' 恢復資料；新增或修改會自動永久保存。');
     }else updateStatus('永久保存功能已啟用；新增或修改後會自動保存。');
-    scheduleSave('startup-sync',1800);
+    setTimeout(function(){const fresh=readLocalMain();if(fresh&&hasUsefulData(fresh))durableSave('startup-sync',fresh);},1800);
     setTimeout(labels,900); setTimeout(labels,2200);
   }
 
   window.LionsClubPersistence={
-    save:function(){return durableSave('manual-api');},
+    save:function(){const fresh=readLocalMain();return durableSave('manual-api',fresh||undefined);},
     restore:restoreBest,
     loadIdb:loadIdb,
     version:VERSION
   };
-  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')durableSave('visibility-hidden');});
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='hidden'){
+      const fresh=readLocalMain();
+      if(fresh&&hasUsefulData(fresh))durableSave('visibility-hidden',fresh);
+    }
+  });
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
